@@ -1,0 +1,12 @@
+{
+  "container_selector": "ul.jobs li.job-card",
+  "container_selector_type": "css",
+  "field_rules": [
+    {"field": "title", "selector": "h3.job-title", "selector_type": "css", "transform": "trim"},
+    {"field": "company", "selector": "span.company", "selector_type": "css", "transform": "trim"},
+    {"field": "location", "selector": "span.location", "selector_type": "css", "transform": "trim"},
+    {"field": "url", "selector": "a.job-link", "selector_type": "css", "attribute": "href", "transform": "abs_url"}
+  ],
+  "confidence": 0.95,
+  "notes": "Known-good spec for the committed jobs_listing.html fixture (CSS over repeating job cards)."
+}

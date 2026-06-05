@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>JS Jobs</title>
+</head>
+<body>
+  <!-- An empty SPA shell: the job list exists only after this script runs. -->
+  <div id="root"></div>
+  <script>
+    const jobs = ["Senior Backend Engineer", "Frontend Engineer", "Data Scientist"];
+    const root = document.getElementById("root");
+    const ul = document.createElement("ul");
+    ul.className = "jobs";
+    for (const title of jobs) {
+      const li = document.createElement("li");
+      li.className = "job-card";
+      const h3 = document.createElement("h3");
+      h3.textContent = title;
+      li.appendChild(h3);
+      ul.appendChild(li);
+    }
+    root.appendChild(ul);
+  </script>
+</body>
+</html>

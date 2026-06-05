@@ -1,0 +1,41 @@
+[project]
+name = "adaptive-scraper"
+version = "0.1.0"
+description = "Adaptive self-writing scraper — schema is the contract, an LLM writes the per-site extraction logic at runtime (Phase 1: prove the loop)."
+readme = "README.md"
+authors = [
+    { name = "jross21", email = "jross21@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "anthropic>=0.40",
+    "httpx>=0.27",
+    "parsel>=1.9",
+    "playwright>=1.40",
+    "pydantic>=2.7",
+    "python-dateutil>=2.9",
+    "selectolax>=0.3.21",
+    "typer>=0.12",
+]
+
+[project.scripts]
+scrape = "adaptive_scraper.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-mock>=3.14",
+    "respx>=0.21",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.18,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live: hits the real Anthropic API; requires ANTHROPIC_API_KEY (deselect with '-m \"not live\"')",
+    "render: drives a real headless browser; requires 'playwright install chromium' (deselected by default)",
+]
+addopts = "-m 'not live and not render'"

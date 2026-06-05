@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Careers at Acme Corp</title>
+  <style>
+    .jobs { list-style: none; }
+    .job-card { padding: 1rem; border-bottom: 1px solid #eee; }
+    .salary { color: green; }
+  </style>
+  <script>
+    // analytics noise that should be stripped by the compressor
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+  </script>
+  <script type="application/ld+json">
+  [
+    {
+      "@context": "https://schema.org",
+      "@type": "JobPosting",
+      "title": "Senior Backend Engineer",
+      "hiringOrganization": { "@type": "Organization", "name": "Acme Corp" },
+      "jobLocation": { "@type": "Place", "address": { "@type": "PostalAddress", "addressLocality": "Remote (US)" } },
+      "url": "https://careers.acme.example/jobs/senior-backend-engineer",
+      "datePosted": "2024-05-01"
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "JobPosting",
+      "title": "Frontend Engineer",
+      "hiringOrganization": { "@type": "Organization", "name": "Acme Corp" },
+      "jobLocation": { "@type": "Place", "address": { "@type": "PostalAddress", "addressLocality": "New York, NY" } },
+      "url": "https://careers.acme.example/jobs/frontend-engineer",
+      "datePosted": "2024-05-03"
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "JobPosting",
+      "title": "Data Scientist",
+      "hiringOrganization": { "@type": "Organization", "name": "Acme Corp" },
+      "jobLocation": { "@type": "Place", "address": { "@type": "PostalAddress", "addressLocality": "San Francisco, CA" } },
+      "url": "https://careers.acme.example/jobs/data-scientist",
+      "datePosted": "2024-04-28"
+    }
+  ]
+  </script>
+</head>
+<body>
+  <header class="site-header">
+    <nav><a href="/">Home</a> <a href="/careers">Careers</a></nav>
+  </header>
+
+  <main>
+    <h1>Open Roles</h1>
+    <ul class="jobs">
+      <li class="job-card" data-req="4521">
+        <h3 class="job-title">Senior Backend Engineer</h3>
+        <span class="company">Acme Corp</span>
+        <span class="location">Remote (US)</span>
+        <span class="salary">$150,000 – $190,000</span>
+        <p class="meta">Req #4521 · Posted 2024-05-01</p>
+        <a class="job-link" href="/jobs/senior-backend-engineer">View role</a>
+      </li>
+      <li class="job-card" data-req="4522">
+        <h3 class="job-title">Frontend Engineer</h3>
+        <span class="company">Acme Corp</span>
+        <span class="location">New York, NY</span>
+        <span class="salary">$130,000 – $160,000</span>
+        <p class="meta">Req #4522 · Posted 2024-05-03</p>
+        <a class="job-link" href="/jobs/frontend-engineer">View role</a>
+      </li>
+      <li class="job-card" data-req="4530">
+        <h3 class="job-title">Data Scientist</h3>
+        <span class="company">Acme Corp</span>
+        <span class="location">San Francisco, CA</span>
+        <span class="salary">$140,000 – $175,000</span>
+        <p class="meta">Req #4530 · Posted 2024-04-28</p>
+        <a class="job-link" href="/jobs/data-scientist">View role</a>
+      </li>
+    </ul>
+  </main>
+
+  <footer class="site-footer">
+    <p>© 2024 Acme Corp. All rights reserved.</p>
+    <svg width="10" height="10"><circle cx="5" cy="5" r="4" /></svg>
+  </footer>
+</body>
+</html>
