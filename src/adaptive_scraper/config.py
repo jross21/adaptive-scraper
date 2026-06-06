@@ -34,3 +34,7 @@ CODEGEN_MODEL = os.getenv("SCRAPER_CODEGEN_MODEL", "claude-sonnet-4-6")
 
 #: How many codegen attempts the self-heal repair loop makes before giving up.
 MAX_REPAIR_ATTEMPTS = int(os.getenv("SCRAPER_MAX_REPAIR_ATTEMPTS", "2"))
+
+#: SQLite spec-cache database (Phase 3). Reused specs skip codegen entirely; the LLM only
+#: fires on first contact or structural/content drift. Override with SCRAPER_CACHE_DB.
+CACHE_DB = Path(os.getenv("SCRAPER_CACHE_DB", "cache.db"))

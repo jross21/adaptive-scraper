@@ -8,7 +8,9 @@ An **adaptive self-writing web scraper**. The core inversion: the **output schem
 permanent contract**, and an LLM writes the per-site extraction logic (an `ExtractionSpec`)
 at runtime. The spec is disposable — regenerated on first contact or on breakage. The only
 nondeterministic step is codegen; everything downstream (`interpret → validate`) is pure and
-replayable. Phases 1 ("prove the loop") and 2 ("self-heal + render") are implemented.
+replayable. Phases 1 ("prove the loop"), 2 ("self-heal + render"), and 3 ("fingerprint cache +
+drift detection") are implemented. A SQLite spec cache means the LLM only fires on first contact
+or structural/content drift — steady-state runs of a known site reuse the cached spec ($0).
 
 ## Commands
 
@@ -40,8 +42,9 @@ There is no configured linter/formatter.
 The pipeline is a fixed, deterministic spine with codegen as the one swappable, nondeterministic stage:
 
 ```
-URL + target → recon (fetch/render + snapshot) → compress DOM → codegen (LLM, self-heal)
-             → interpret (deterministic) → validate (Pydantic) → print JSON + write run record
+URL + target → recon (fetch/render + snapshot) → compress DOM → fingerprint + cache lookup
+             → codegen (LLM, self-heal) on miss/drift only → interpret (deterministic)
+             → validate (Pydantic) → print JSON + write run record
 ```
 
 Key design seams to understand before changing anything:
@@ -54,16 +57,27 @@ Key design seams to understand before changing anything:
   validate layer at runtime (TYPE_CHECKING only). `run_pipeline` injects the "definition of
   success" (`interpret → validate`) as the `evaluate` callback into `generate_spec_with_repair`.
 
-- **Self-heal loop** (`generate_spec_with_repair`): generate a spec, evaluate it, and on failure
-  feed the validation errors back to the model (`build_repair_message`) and retry. It exhausts
-  `MAX_REPAIR_ATTEMPTS` per model, then escalates up the `ESCALATION_MODELS` ladder
-  (Sonnet 4.6 → Opus 4.8). It **never raises on validation failure** — it returns the best-effort
-  spec with `ok=False` so the caller still writes a run record and exits non-zero.
+- **Single-model self-heal loop** (`generate_spec_with_repair`): generate a spec, evaluate it, and
+  on failure feed the validation errors back to the model (`build_repair_message`) and retry, up to
+  `MAX_REPAIR_ATTEMPTS` on a single model (`CODEGEN_MODEL`, default Sonnet 4.6). **Model escalation
+  was removed** (cost/simplicity) — there is no Sonnet→Opus ladder. It **never raises on validation
+  failure** — it returns the best-effort spec with `ok=False` so the caller still writes a run
+  record and exits non-zero.
+
+- **Fingerprint spec cache** (`compress/fingerprint.py` + `cache/cache.py`, wired in `pipeline.py`):
+  before codegen, `run_pipeline` hashes the page's *structure* into a fingerprint and looks it up in
+  a SQLite cache keyed by URL+target. Fingerprint match + cached spec still validates → **hit**
+  (reuse spec, skip the LLM); fingerprint differs or cached spec fails → **drift** (regenerate +
+  refresh); no entry → **miss**. The fingerprint is content-insensitive (row counts, salaries,
+  dates, `href`s, build-hashed class suffixes don't trip it) but structure-sensitive. The cache is
+  fail-open: a corrupt/old row is treated as a miss, never an error. `SqliteSpecCache` sits behind a
+  `SpecCacheRepo` Protocol so Phase 4 can swap in Postgres without touching callers. Passing `spec=`
+  (replay) bypasses the whole block, so the cache is never consulted on replay.
 
 - **Structured outputs**: codegen uses `client.messages.parse(output_format=ExtractionSpec)`, so
-  the model is forced to return a schema-valid spec. Per-model request kwargs matter:
-  `_request_kwargs` omits `temperature`/`top_p`/`top_k` for Opus 4.7/4.8 (they return HTTP 400),
-  but keeps `temperature=0` for Sonnet 4.6.
+  the model is forced to return a schema-valid spec. `_request_kwargs` keeps `temperature=0` for
+  Sonnet 4.6 but omits `temperature`/`top_p`/`top_k` for Opus 4.7/4.8 (they return HTTP 400) — kept
+  as a guard for anyone overriding `SCRAPER_CODEGEN_MODEL` to an Opus id.
 
 - **Deterministic, sandbox-free execution.** `execute/interpreter.py` runs the spec with four
   selector types (`css | xpath | json_ld | regex`) and a **closed whitelist** of named transforms
@@ -86,21 +100,24 @@ The only registered target is `job_postings` (`JobPosting`) in `models/schema.py
 ## Runs / replay
 
 A live run writes `runs/<run-id>/` containing `page.html`, `meta.json`, and `run.json` (the
-`ScrapeRun` record: generated spec, `attempts`, `models_tried`, `repair_log`, token usage).
-Because the snapshot stores both the page **and** the spec, any run is fully reproducible offline
-via `--from-snapshot` (no API call).
+`ScrapeRun` record: generated spec, `attempts`, `repair_log`, token usage, plus `cache_status` and
+`fingerprint`). Because the snapshot stores both the page **and** the spec, any run is fully
+reproducible offline via `--from-snapshot` (no API call). The spec cache is a *separate* mutable
+store (`cache.db`) keyed by URL+target — distinct from the append-only `runs/` history; CLI flags
+`--no-cache` / `--refresh` / `--cache-db` control it.
 
 ## Config
 
 `config.py` calls `load_dotenv()` at import, so a project-root `.env` (gitignored;
 `.env.example` is the committed template) is read automatically for `ANTHROPIC_API_KEY` and
 the settings below. A real shell env var overrides `.env`. Constants in `config.py`, all
-env-overridable: `SCRAPER_RUNS_DIR` (default `runs`),
+env-overridable: `SCRAPER_CODEGEN_MODEL` (default `claude-sonnet-4-6`), `SCRAPER_MAX_REPAIR_ATTEMPTS`
+(default `2`), `SCRAPER_CACHE_DB` (default `cache.db`), `SCRAPER_RUNS_DIR` (default `runs`),
 `SCRAPER_USER_AGENT`, `SCRAPER_TIMEOUT`, `SCRAPER_TOKEN_BUDGET` (compressed-DOM char budget sent to
-codegen), `SCRAPER_ESCALATION_MODELS` (comma-separated ladder), `SCRAPER_MAX_REPAIR_ATTEMPTS`.
+codegen).
 
 ## Still deferred (later phases)
 
-Pagination / list→detail crawl (2+); structural fingerprinting + scraper cache + drift detection
-(3); n8n orchestration, warehouse sink, dead-lettering, cost dashboards (4); generated-code
-fallback + sandbox (5).
+Pagination / list→detail crawl (2+); n8n orchestration, warehouse sink, dead-lettering, cost
+dashboards, Postgres-backed cache (4); generated-code fallback + sandbox, proactive drift
+regeneration (5).

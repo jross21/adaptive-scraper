@@ -4,19 +4,21 @@ A web scraper where the **output schema is the fixed contract** and an LLM write
 per-site extraction logic at runtime. The schema is permanent; the generated extraction
 spec is disposable and regenerated on first contact or on breakage.
 
-**Phase 1 ("prove the loop")** and **Phase 2 ("self-heal + render")** are implemented: one
-end-to-end vertical slice from a single URL to clean, schema-validated structured output,
-with a repair loop, model escalation, and JS rendering. No cache, no code-execution sandbox
-(those are Phases 3–5).
+**Phases 1–3 are implemented:** "prove the loop" (1), "self-heal + render" (2), and
+"fingerprint cache + drift detection" (3). One end-to-end vertical slice from a single URL
+to clean, schema-validated structured output, with a single-model self-heal loop, JS
+rendering, and a structural-fingerprint spec cache that skips the LLM on unchanged pages.
+No code-execution sandbox yet (Phase 5).
 
 ```
 URL + target schema
   → fetch + snapshot      (httpx, robots.txt check, raw HTML stored for replay; --render or
                            auto-fallback drives a headless browser for JS-heavy pages)
   → compress DOM          (strip noise, surface JSON-LD, exemplars of repeating rows)
+  → fingerprint + cache   (hash the page structure; on a match reuse the cached spec and
+                           skip the LLM — regenerate only on first contact or drift)
   → codegen + self-heal   (Claude emits an ExtractionSpec via structured outputs; on validation
-                           failure the errors are fed back and regenerated, escalating
-                           Sonnet 4.6 → Opus 4.8)
+                           failure the errors are fed back and regenerated on the same model)
   → interpret             (deterministic: css | xpath | json_ld | regex + whitelisted transforms)
   → validate              (Pydantic rows + row-count floor + null-rate)
   → print JSON + run record
@@ -38,6 +40,10 @@ The `ANTHROPIC_API_KEY` is needed only for live codegen / live runs. It's loaded
 automatically from `.env` (gitignored) at startup; a shell `export ANTHROPIC_API_KEY=...`
 also works and takes precedence over `.env`.
 
+Other env vars (all optional): `SCRAPER_CODEGEN_MODEL` (default `claude-sonnet-4-6`),
+`SCRAPER_CACHE_DB` (default `cache.db`), `SCRAPER_MAX_REPAIR_ATTEMPTS` (default `2`),
+`SCRAPER_RUNS_DIR`, `SCRAPER_TIMEOUT`, `SCRAPER_TOKEN_BUDGET`, `SCRAPER_USER_AGENT`.
+
 ## Usage
 
 ```bash
@@ -53,14 +59,30 @@ uv run scrape --from-snapshot runs/<run-id> --target job_postings
 ```
 
 When codegen's first spec doesn't validate, the **self-heal loop** feeds the validation
-errors back to the model and regenerates, escalating Sonnet 4.6 → Opus 4.8 after exhausting
-attempts on each. The `ScrapeRun` record captures `attempts`, `models_tried`, and a
-`repair_log` so you can see what it took. (Opus 4.8 omits `temperature`, which it rejects;
-Sonnet 4.6 keeps `temperature=0`.)
+errors back to the model and regenerates, up to `SCRAPER_MAX_REPAIR_ATTEMPTS` tries on a
+single model (default Sonnet 4.6). The `ScrapeRun` record captures `attempts` and a
+`repair_log` so you can see what it took.
+
+The **spec cache** (Phase 3) is the cost lever. Before calling the LLM, the scraper hashes
+the page's *structure* into a fingerprint and looks it up in a small SQLite cache keyed by
+URL + target:
+
+- **hit** — fingerprint matches and the cached spec still validates → reuse it, skip the LLM
+  entirely ($0);
+- **drift** — the structure changed, or the cached spec stopped validating → regenerate and
+  refresh the cache;
+- **miss** — first contact → generate and store.
+
+So a known site costs nothing in steady state; the model only fires on first contact or a
+real change. Use `--no-cache` to bypass the cache, `--refresh` to force regeneration, and
+`--cache-db PATH` to point at a different database (default `cache.db`). The fingerprint is
+content-insensitive (new rows, changed salaries/dates/links don't trip it) but
+structure-sensitive.
 
 A live run writes `runs/<run-id>/` containing `page.html`, `meta.json`, and `run.json`
-(the `ScrapeRun` record with the generated spec + token usage). The command exits
-non-zero and prints the validation errors when extraction doesn't satisfy the schema.
+(the `ScrapeRun` record with the generated spec, fingerprint, cache status, and token
+usage). The command exits non-zero and prints the validation errors when extraction
+doesn't satisfy the schema.
 
 The only built-in target is `job_postings` (the `JobPosting` schema in
 `src/adaptive_scraper/models/schema.py`). Add new targets there; the rest of the
@@ -84,18 +106,21 @@ that model-generated extraction logic validates against the schema.
 src/adaptive_scraper/
   models/      JobPosting + ExtractionTarget (the contract); FieldRule/ExtractionSpec (codegen output); ScrapeRun
   recon/       polite fetch (robots.txt, User-Agent) + page snapshot/replay + Playwright JS render
-  compress/    DOM -> compact, signal-rich view (JSON-LD, repeating-structure exemplars, tag outline)
+  compress/    DOM -> compact, signal-rich view (JSON-LD, repeating exemplars, tag outline) +
+               a content-insensitive structural fingerprint of the page (fingerprint.py)
   codegen/     prompts (role, constraints, prompt-injection framing) + the Claude call (structured
-               outputs) + the self-heal repair loop with Sonnet->Opus escalation
+               outputs) + the single-model self-heal repair loop
+  cache/       SQLite spec cache — reuse a known-good spec when the fingerprint is unchanged
   execute/     the selector-map interpreter (4 selector types) + whitelisted transform registry
   validate/    structural validation against the target schema
-  pipeline.py  orchestration seam (wires the modules; pass a spec to skip codegen)
+  pipeline.py  orchestration seam (fingerprint -> cache lookup -> codegen; pass a spec to skip it all)
   cli.py       typer entry point
 ```
 
 ## Deferred to later phases
 
-**Done:** self-heal retry loop + model escalation (2) · JS rendering (2).
-**Still deferred:** pagination, list→detail crawl (2+) · structural fingerprinting +
-scraper cache + drift detection (3) · n8n orchestration, warehouse sink, dead-lettering,
-cost dashboards (4) · generated-code fallback + sandbox, proactive drift regeneration (5).
+**Done:** self-heal retry loop (2) · JS rendering (2) · structural fingerprint cache + drift
+detection (3).
+**Still deferred:** pagination, list→detail crawl (2+) · n8n orchestration, warehouse sink,
+dead-lettering, cost dashboards, Postgres-backed cache (4) · generated-code fallback +
+sandbox, proactive drift regeneration (5).

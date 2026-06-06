@@ -17,8 +17,9 @@ from typing import Optional
 
 import typer
 
+from .cache.cache import SqliteSpecCache
 from .codegen.agent import DEFAULT_MODEL
-from .config import RUNS_DIR
+from .config import CACHE_DB, RUNS_DIR
 from .models.run import ScrapeRun
 from .models.schema import TARGET_REGISTRY
 from .pipeline import run_pipeline
@@ -26,9 +27,21 @@ from .recon.fetch import fetch
 from .recon.render import looks_js_rendered, render_page
 from .recon.snapshot import load_snapshot, save_snapshot
 
-app = typer.Typer(add_completion=False, help="Adaptive self-writing scraper (Phase 1).")
+app = typer.Typer(add_completion=False, help="Adaptive self-writing scraper.")
 
 RUN_RECORD = "run.json"
+
+_CACHE_MESSAGES = {
+    "hit": "cache HIT — reused the stored spec, skipped the LLM ($0)",
+    "miss": "cache MISS — first contact, generated a new spec",
+    "drift_regenerated": "DRIFT — page changed, regenerated the spec",
+}
+
+
+def _echo_cache_status(run: ScrapeRun) -> None:
+    msg = _CACHE_MESSAGES.get(run.cache_status)
+    if msg:
+        typer.echo(msg, err=True)
 
 
 def _new_run_id() -> str:
@@ -57,6 +70,9 @@ def scrape(
     model: str = typer.Option(DEFAULT_MODEL, "--model", help="Codegen model (overrides the default Sonnet)."),
     render: bool = typer.Option(False, "--render/--no-render", help="Render JS with a headless browser up front. When off, the scraper still auto-falls-back to rendering if static extraction fails on a JS-shelled page."),
     runs_dir: Path = typer.Option(RUNS_DIR, "--runs-dir", help="Where snapshots/records are written."),
+    cache: bool = typer.Option(True, "--cache/--no-cache", help="Reuse a cached spec when the page structure is unchanged (skips the LLM)."),
+    refresh: bool = typer.Option(False, "--refresh", help="Ignore any cached spec and regenerate, then update the cache."),
+    cache_db: Path = typer.Option(CACHE_DB, "--cache-db", help="SQLite spec-cache database path."),
 ) -> None:
     if target not in TARGET_REGISTRY:
         typer.echo(f"unknown target {target!r}; known: {', '.join(TARGET_REGISTRY)}", err=True)
@@ -80,6 +96,7 @@ def scrape(
             typer.echo("provide a URL, or use --from-snapshot", err=True)
             raise typer.Exit(code=2)
         run_id = _new_run_id()
+        spec_cache = SqliteSpecCache(cache_db) if cache else None
         result = render_page(url) if render else fetch(url)
         snap_dir = save_snapshot(run_id, result, runs_dir=runs_dir)
         outcome = run_pipeline(
@@ -91,6 +108,9 @@ def scrape(
             model=model,
             snapshot_uri=str(snap_dir),
             rendered=result.rendered,
+            use_cache=cache,
+            refresh=refresh,
+            cache=spec_cache,
         )
         # Auto-fallback: static extraction failed on what looks like a JS shell — render
         # the page in a real browser and try once more (overwriting the snapshot).
@@ -109,9 +129,13 @@ def scrape(
                 run_id=run_id,
                 model=model,
                 snapshot_uri=str(snap_dir),
+                use_cache=cache,
+                refresh=refresh,
+                cache=spec_cache,
                 rendered=True,
             )
         _write_run_record(snap_dir, outcome.run)
+        _echo_cache_status(outcome.run)
 
     typer.echo(json.dumps(outcome.validation.valid_rows, indent=2, default=str))
 

@@ -12,6 +12,7 @@ wheels/
 # Tooling + run artifacts
 .pytest_cache/
 runs/
+cache.db*
 .env
 
 # macOS

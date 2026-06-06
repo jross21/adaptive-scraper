@@ -30,3 +30,7 @@ class ScrapeRun(BaseModel):
     repair_log: list[str] = Field(default_factory=list)
     tokens_in: int = 0
     tokens_out: int = 0
+    # Phase-3 spec cache: how the spec was sourced, and the structural fingerprint of the
+    # page. On a "hit" the cached spec was reused and the LLM was skipped (tokens stay 0).
+    cache_status: Literal["miss", "hit", "drift_regenerated", "disabled"] = "disabled"
+    fingerprint: str | None = None
