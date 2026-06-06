@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 SelectorType = Literal["css", "xpath", "json_ld", "regex"]
 
@@ -36,3 +36,16 @@ class ExtractionSpec(BaseModel):
     field_rules: list[FieldRule]
     confidence: float = 0.0  # model's self-reported confidence, 0..1 (validated in-app)
     notes: str | None = None  # reasoning, for debugging
+
+    # --- Pagination (optional; absent -> single page) ---
+    # The "next page" link. Always a DOM anchor, so css/xpath only.
+    next_page_selector: str | None = None
+    next_page_selector_type: Literal["css", "xpath"] = "css"
+    next_page_attribute: str = "href"  # the attribute holding the next-page URL
+
+    # --- List -> detail enrichment (optional; absent -> no detail crawl) ---
+    # `detail_url_field` names a field already in `field_rules` whose value is the per-row
+    # detail-page URL; `detail_field_rules` are extracted from that page (cardinality "one")
+    # and merged into the row.
+    detail_url_field: str | None = None
+    detail_field_rules: list[FieldRule] = Field(default_factory=list)

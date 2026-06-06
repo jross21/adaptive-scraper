@@ -38,3 +38,9 @@ MAX_REPAIR_ATTEMPTS = int(os.getenv("SCRAPER_MAX_REPAIR_ATTEMPTS", "2"))
 #: SQLite spec-cache database (Phase 3). Reused specs skip codegen entirely; the LLM only
 #: fires on first contact or structural/content drift. Override with SCRAPER_CACHE_DB.
 CACHE_DB = Path(os.getenv("SCRAPER_CACHE_DB", "cache.db"))
+
+#: Crawl politeness/caps (pagination + list→detail). A crawl reuses one cached spec across
+#: all pages, so extra pages cost no LLM tokens — these bound fetch volume, not cost.
+CRAWL_DELAY = float(os.getenv("SCRAPER_CRAWL_DELAY", "1.0"))  # seconds between requests
+MAX_PAGES = int(os.getenv("SCRAPER_MAX_PAGES", "10"))  # pagination cap per crawl
+MAX_DETAIL_PAGES = int(os.getenv("SCRAPER_MAX_DETAIL_PAGES", "25"))  # detail-fetch cap per crawl

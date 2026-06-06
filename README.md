@@ -5,10 +5,11 @@ per-site extraction logic at runtime. The schema is permanent; the generated ext
 spec is disposable and regenerated on first contact or on breakage.
 
 **Phases 1–3 are implemented:** "prove the loop" (1), "self-heal + render" (2), and
-"fingerprint cache + drift detection" (3). One end-to-end vertical slice from a single URL
-to clean, schema-validated structured output, with a single-model self-heal loop, JS
-rendering, and a structural-fingerprint spec cache that skips the LLM on unchanged pages.
-No code-execution sandbox yet (Phase 5).
+"fingerprint cache + drift detection" (3) — plus **pagination + list→detail crawl**. One
+end-to-end slice from a URL to clean, schema-validated structured output, with a single-model
+self-heal loop, JS rendering, a structural-fingerprint spec cache that skips the LLM on
+unchanged pages, and a `--crawl` mode that follows pagination across a whole board reusing the
+same cached spec (no extra LLM cost). No code-execution sandbox yet (Phase 5).
 
 ```
 URL + target schema
@@ -19,8 +20,10 @@ URL + target schema
                            skip the LLM — regenerate only on first contact or drift)
   → codegen + self-heal   (Claude emits an ExtractionSpec via structured outputs; on validation
                            failure the errors are fed back and regenerated on the same model)
+  → crawl (--crawl)       (follow next-page links + optional per-row detail pages, reusing the
+                           SAME spec on every page; snapshots each page for offline replay)
   → interpret             (deterministic: css | xpath | json_ld | regex + whitelisted transforms)
-  → validate              (Pydantic rows + row-count floor + null-rate)
+  → validate              (Pydantic rows + row-count floor + null-rate, over the merged set)
   → print JSON + run record
 ```
 
@@ -42,7 +45,9 @@ also works and takes precedence over `.env`.
 
 Other env vars (all optional): `SCRAPER_CODEGEN_MODEL` (default `claude-sonnet-4-6`),
 `SCRAPER_CACHE_DB` (default `cache.db`), `SCRAPER_MAX_REPAIR_ATTEMPTS` (default `2`),
-`SCRAPER_RUNS_DIR`, `SCRAPER_TIMEOUT`, `SCRAPER_TOKEN_BUDGET`, `SCRAPER_USER_AGENT`.
+`SCRAPER_CRAWL_DELAY` (default `1.0`), `SCRAPER_MAX_PAGES` (default `10`),
+`SCRAPER_MAX_DETAIL_PAGES` (default `25`), `SCRAPER_RUNS_DIR`, `SCRAPER_TIMEOUT`,
+`SCRAPER_TOKEN_BUDGET`, `SCRAPER_USER_AGENT`.
 
 ## Usage
 
@@ -54,9 +59,21 @@ uv run scrape "https://example-job-board.com/jobs" --target job_postings
 # Force JS rendering up front (skip the static attempt) for sites you know need it.
 uv run scrape "https://spa-job-board.com/jobs" --target job_postings --render
 
-# Replay: re-run a stored snapshot offline (reuses the stored spec — no API call).
+# Crawl: follow pagination across the whole board (one codegen, reused on every page).
+uv run scrape "https://example-job-board.com/jobs" --target job_postings --crawl
+# ...and enrich each row from its own detail page (more fetches; opt-in):
+uv run scrape "https://example-job-board.com/jobs" --target job_postings --crawl --detail
+
+# Replay: re-run a stored snapshot offline (reuses the stored spec — no API call). A crawl's
+# pages are all snapshotted, so replay re-walks the whole crawl offline.
 uv run scrape --from-snapshot runs/<run-id> --target job_postings
 ```
+
+`--crawl` follows `next` links up to `--max-pages` (default 10) with a `--crawl-delay`
+(default 1s) between polite requests; `--detail` follows each row's detail URL up to
+`--max-detail` (default 25). The spec is generated once on page 1 and reused on every page, so
+a multi-page crawl costs no extra LLM tokens. (Limitation: pages whose structure differs from
+page 1 surface as a degraded null-rate rather than being re-generated per page.)
 
 When codegen's first spec doesn't validate, the **self-heal loop** feeds the validation
 errors back to the model and regenerates, up to `SCRAPER_MAX_REPAIR_ATTEMPTS` tries on a
@@ -106,6 +123,7 @@ that model-generated extraction logic validates against the schema.
 src/adaptive_scraper/
   models/      JobPosting + ExtractionTarget (the contract); FieldRule/ExtractionSpec (codegen output); ScrapeRun
   recon/       polite fetch (robots.txt, User-Agent) + page snapshot/replay + Playwright JS render
+               + crawler.py (pagination + list→detail walk; live + replay page sources)
   compress/    DOM -> compact, signal-rich view (JSON-LD, repeating exemplars, tag outline) +
                a content-insensitive structural fingerprint of the page (fingerprint.py)
   codegen/     prompts (role, constraints, prompt-injection framing) + the Claude call (structured
@@ -120,7 +138,7 @@ src/adaptive_scraper/
 ## Deferred to later phases
 
 **Done:** self-heal retry loop (2) · JS rendering (2) · structural fingerprint cache + drift
-detection (3).
-**Still deferred:** pagination, list→detail crawl (2+) · n8n orchestration, warehouse sink,
-dead-lettering, cost dashboards, Postgres-backed cache (4) · generated-code fallback +
+detection (3) · pagination + list→detail crawl (2+).
+**Still deferred:** n8n orchestration, warehouse sink, dead-lettering, cost dashboards,
+Postgres-backed cache, retry/backoff + per-page rendering (4) · generated-code fallback +
 sandbox, proactive drift regeneration (5).

@@ -54,6 +54,16 @@ def test_user_message_frames_page_content_as_data_and_includes_schema():
     assert "cardinality" in msg.lower()
 
 
+def test_system_prompt_mentions_pagination():
+    assert "next_page_selector" in SYSTEM_PROMPT
+
+
+def test_detail_guidance_is_conditional():
+    cd = compress(FIXTURE.read_text())
+    assert "detail_field_rules" not in build_user_message(cd, TARGET)  # off by default
+    assert "detail_field_rules" in build_user_message(cd, TARGET, want_detail=True)
+
+
 def test_generate_spec_returns_spec_and_usage_from_client():
     spec = ExtractionSpec(
         container_selector="ul.jobs li.job-card",

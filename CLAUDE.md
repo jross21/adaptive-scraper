@@ -9,8 +9,9 @@ permanent contract**, and an LLM writes the per-site extraction logic (an `Extra
 at runtime. The spec is disposable — regenerated on first contact or on breakage. The only
 nondeterministic step is codegen; everything downstream (`interpret → validate`) is pure and
 replayable. Phases 1 ("prove the loop"), 2 ("self-heal + render"), and 3 ("fingerprint cache +
-drift detection") are implemented. A SQLite spec cache means the LLM only fires on first contact
-or structural/content drift — steady-state runs of a known site reuse the cached spec ($0).
+drift detection") are implemented, plus pagination + list→detail crawl. A SQLite spec cache means
+the LLM only fires on first contact or structural/content drift — steady-state runs of a known site
+reuse the cached spec ($0), and a `--crawl` walks a whole board reusing that one spec on every page.
 
 ## Commands
 
@@ -90,6 +91,16 @@ Key design seams to understand before changing anything:
   `looks_js_rendered`, it re-fetches with `render_page` (Playwright), overwrites the snapshot, and
   retries once with `rendered=True`.
 
+- **Crawl layer** (`recon/crawler.py`, opt-in via `--crawl`/`--detail`): keeps `interpret()` pure —
+  page 1 is fetched + codegen'd by the caller, then `crawl()` follows `spec.next_page_selector` to
+  later pages and reuses the SAME spec on each (no extra LLM), accumulating rows; optional
+  `_enrich` follows each row's `detail_url_field` to merge detail-page fields. Validation runs once
+  over the merged set; the cache hit/drift `_evaluate` stays page-1-only. A `PageSource` Protocol
+  (`LivePageSource` polite shared-client fetcher / robots-once; `ReplayPageSource` reads a stored
+  manifest) lets live runs and `--from-snapshot` replay walk the identical path. Pagination/detail
+  are optional fields on `ExtractionSpec`, so they ride the cache for free; the fingerprint stays
+  page-1-based (so page 2+ structural drift surfaces as a null-rate, not per-page re-codegen).
+
 ## Targets (adding a new schema)
 
 A target is the contract a run is judged against. `ExtractionTarget` (`models/target.py`) bundles
@@ -102,8 +113,10 @@ The only registered target is `job_postings` (`JobPosting`) in `models/schema.py
 A live run writes `runs/<run-id>/` containing `page.html`, `meta.json`, and `run.json` (the
 `ScrapeRun` record: generated spec, `attempts`, `repair_log`, token usage, plus `cache_status` and
 `fingerprint`). Because the snapshot stores both the page **and** the spec, any run is fully
-reproducible offline via `--from-snapshot` (no API call). The spec cache is a *separate* mutable
-store (`cache.db`) keyed by URL+target — distinct from the append-only `runs/` history; CLI flags
+reproducible offline via `--from-snapshot` (no API call). A `--crawl` additionally writes
+`runs/<id>/pages/` + `detail/` + a `manifest.json`, so replay re-walks the whole crawl offline (a
+run with no manifest replays as a single page). The spec cache is a *separate* mutable store
+(`cache.db`) keyed by URL+target — distinct from the append-only `runs/` history; CLI flags
 `--no-cache` / `--refresh` / `--cache-db` control it.
 
 ## Config
@@ -112,12 +125,13 @@ store (`cache.db`) keyed by URL+target — distinct from the append-only `runs/`
 `.env.example` is the committed template) is read automatically for `ANTHROPIC_API_KEY` and
 the settings below. A real shell env var overrides `.env`. Constants in `config.py`, all
 env-overridable: `SCRAPER_CODEGEN_MODEL` (default `claude-sonnet-4-6`), `SCRAPER_MAX_REPAIR_ATTEMPTS`
-(default `2`), `SCRAPER_CACHE_DB` (default `cache.db`), `SCRAPER_RUNS_DIR` (default `runs`),
-`SCRAPER_USER_AGENT`, `SCRAPER_TIMEOUT`, `SCRAPER_TOKEN_BUDGET` (compressed-DOM char budget sent to
-codegen).
+(default `2`), `SCRAPER_CACHE_DB` (default `cache.db`), `SCRAPER_CRAWL_DELAY` (default `1.0`),
+`SCRAPER_MAX_PAGES` (default `10`), `SCRAPER_MAX_DETAIL_PAGES` (default `25`), `SCRAPER_RUNS_DIR`
+(default `runs`), `SCRAPER_USER_AGENT`, `SCRAPER_TIMEOUT`, `SCRAPER_TOKEN_BUDGET` (compressed-DOM
+char budget sent to codegen).
 
 ## Still deferred (later phases)
 
-Pagination / list→detail crawl (2+); n8n orchestration, warehouse sink, dead-lettering, cost
-dashboards, Postgres-backed cache (4); generated-code fallback + sandbox, proactive drift
+n8n orchestration, warehouse sink, dead-lettering, cost dashboards, Postgres-backed cache,
+retry/backoff + per-page rendering (4); generated-code fallback + sandbox, proactive drift
 regeneration (5).

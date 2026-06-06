@@ -118,6 +118,7 @@ def generate_spec_with_repair(
     client: anthropic.Anthropic | None = None,
     model: str = DEFAULT_MODEL,
     max_attempts: int = MAX_REPAIR_ATTEMPTS,
+    want_detail: bool = False,
 ) -> RepairResult:
     """Generate a spec, validate it via `evaluate`, and on failure feed the errors back to
     the model and retry on the same model, up to `max_attempts`. Returns the first
@@ -136,9 +137,11 @@ def generate_spec_with_repair(
 
     for attempt in range(1, max_attempts + 1):
         if last_spec is None or last_validation is None:
-            message = build_user_message(compressed, target)
+            message = build_user_message(compressed, target, want_detail=want_detail)
         else:
-            message = build_repair_message(compressed, target, last_spec, last_validation)
+            message = build_repair_message(
+                compressed, target, last_spec, last_validation, want_detail=want_detail
+            )
 
         result = generate_spec(
             compressed, target, client=client, model=model, user_message=message

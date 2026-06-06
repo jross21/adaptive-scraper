@@ -34,3 +34,8 @@ class ScrapeRun(BaseModel):
     # page. On a "hit" the cached spec was reused and the LLM was skipped (tokens stay 0).
     cache_status: Literal["miss", "hit", "drift_regenerated", "disabled"] = "disabled"
     fingerprint: str | None = None
+    # Crawl observability: pages followed via pagination and detail pages fetched (1/0 for a
+    # single-page run). The same spec drives every page, so these don't add LLM cost.
+    pages_crawled: int = 1
+    detail_pages_fetched: int = 0
+    crawl_page_urls: list[str] = Field(default_factory=list)

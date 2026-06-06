@@ -22,11 +22,12 @@ from .cache.cache import CacheEntry, SpecCacheRepo, SqliteSpecCache
 from .codegen.agent import DEFAULT_MODEL, generate_spec_with_repair
 from .compress.compressor import compress
 from .compress.fingerprint import fingerprint
-from .config import CACHE_DB, TOKEN_BUDGET
+from .config import CACHE_DB, MAX_DETAIL_PAGES, TOKEN_BUDGET
 from .execute.interpreter import interpret
 from .models.run import ScrapeRun
 from .models.spec import ExtractionSpec
 from .models.target import ExtractionTarget
+from .recon.crawler import CrawlResult, PageSource, crawl
 from .validate.validator import ValidationResult, validate
 
 
@@ -39,6 +40,7 @@ class PipelineOutcome:
     run: ScrapeRun
     validation: ValidationResult
     rows: list[dict]
+    crawl: CrawlResult | None = None  # set when a multi-page crawl ran (for snapshotting)
 
 
 def run_pipeline(
@@ -56,6 +58,10 @@ def run_pipeline(
     use_cache: bool = True,
     refresh: bool = False,
     cache: SpecCacheRepo | None = None,
+    page_source: PageSource | None = None,
+    max_pages: int = 1,
+    enrich_detail: bool = False,
+    max_detail: int = MAX_DETAIL_PAGES,
 ) -> PipelineOutcome:
     tokens_in = tokens_out = 0
     attempts = 1
@@ -104,6 +110,7 @@ def run_pipeline(
                 evaluate=_evaluate,
                 client=client,
                 model=model,
+                want_detail=enrich_detail,
             )
             spec = repair.spec
             model = repair.model
@@ -128,7 +135,23 @@ def run_pipeline(
                     )
                 )
 
-    rows = interpret(spec, html, base_url=base_url, cardinality=target.cardinality)
+    # Crawl (pagination/detail) reuses the SAME spec on every page, so it adds no LLM cost.
+    # `spec=` replay can also crawl when given a ReplayPageSource. Validate the merged set once.
+    crawl_result: CrawlResult | None = None
+    if page_source is not None and (max_pages > 1 or enrich_detail):
+        crawl_result = crawl(
+            spec=spec,
+            target=target,
+            start_html=html,
+            start_url=base_url,
+            page_source=page_source,
+            max_pages=max_pages,
+            max_detail=max_detail,
+            enrich_detail=enrich_detail,
+        )
+        rows = crawl_result.rows
+    else:
+        rows = interpret(spec, html, base_url=base_url, cardinality=target.cardinality)
     validation = validate(rows, target)
 
     run = ScrapeRun(
@@ -148,5 +171,8 @@ def run_pipeline(
         tokens_out=tokens_out,
         cache_status=cache_status,
         fingerprint=fingerprint_value,
+        pages_crawled=crawl_result.pages_crawled if crawl_result else 1,
+        detail_pages_fetched=crawl_result.detail_pages_fetched if crawl_result else 0,
+        crawl_page_urls=crawl_result.page_urls if crawl_result else [],
     )
-    return PipelineOutcome(run=run, validation=validation, rows=rows)
+    return PipelineOutcome(run=run, validation=validation, rows=rows, crawl=crawl_result)

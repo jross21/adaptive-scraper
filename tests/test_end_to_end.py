@@ -95,3 +95,66 @@ def test_cli_replay_exits_nonzero_when_validation_fails(tmp_path):
 
     result = CliRunner().invoke(app, ["--from-snapshot", str(run_dir), "--target", "job_postings"])
     assert result.exit_code == 1
+
+
+def _crawl_page(titles, *, next_url=None):
+    cards = "".join(
+        f'<li class="job-card"><h3 class="job-title">{t}</h3>'
+        f'<span class="company">Acme</span>'
+        f'<a class="job-link" href="/jobs/{t}">apply</a></li>'
+        for t in titles
+    )
+    nxt = f'<a class="next" href="{next_url}">Next</a>' if next_url else ""
+    return f"<html><body><ul class='jobs'>{cards}</ul>{nxt}</body></html>"
+
+
+def test_cli_replay_multipage_rewalks_offline(tmp_path):
+    # Seed a run dir as a crawl would: page.html + pages/ + manifest.json + a paginating spec.
+    base = "https://board.example"
+    run_dir = tmp_path / "crawl-run"
+    (run_dir / "pages").mkdir(parents=True)
+    (run_dir / "page.html").write_text(_crawl_page(["A1", "A2", "A3"], next_url=f"{base}/p2"))
+    (run_dir / "pages" / "002.html").write_text(_crawl_page(["B1", "B2", "B3"], next_url=f"{base}/p3"))
+    (run_dir / "pages" / "003.html").write_text(_crawl_page(["C1", "C2", "C3"]))
+    (run_dir / "meta.json").write_text(json.dumps({"url": f"{base}/p1", "status_code": 200}))
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "pages": [
+                    {"url": f"{base}/p1", "file": "page.html"},
+                    {"url": f"{base}/p2", "file": "pages/002.html"},
+                    {"url": f"{base}/p3", "file": "pages/003.html"},
+                ],
+                "detail": [],
+            }
+        )
+    )
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "crawl-run",
+                "url": f"{base}/p1",
+                "target_name": "job_postings",
+                "model": "stored",
+                "spec": {
+                    "container_selector": "ul.jobs li.job-card",
+                    "container_selector_type": "css",
+                    "field_rules": [
+                        {"field": "title", "selector": "h3.job-title", "selector_type": "css"},
+                        {"field": "company", "selector": "span.company", "selector_type": "css"},
+                        {"field": "url", "selector": "a.job-link", "selector_type": "css", "attribute": "href", "transform": "abs_url"},
+                    ],
+                    "next_page_selector": "a.next",
+                    "next_page_attribute": "href",
+                    "confidence": 0.95,
+                },
+            }
+        )
+    )
+
+    result = CliRunner().invoke(app, ["--from-snapshot", str(run_dir), "--target", "job_postings"])
+
+    assert result.exit_code == 0, result.output
+    # Rows from all three stored pages were re-walked offline.
+    assert "A1" in result.output and "B1" in result.output and "C3" in result.output
