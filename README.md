@@ -31,8 +31,12 @@ reproducible offline.
 ```bash
 uv sync
 uv run playwright install chromium    # one-time: the headless browser for JS rendering
-export ANTHROPIC_API_KEY=sk-ant-...   # needed only for live codegen / live runs
+cp .env.example .env                   # then paste your key into .env (ANTHROPIC_API_KEY)
 ```
+
+The `ANTHROPIC_API_KEY` is needed only for live codegen / live runs. It's loaded
+automatically from `.env` (gitignored) at startup; a shell `export ANTHROPIC_API_KEY=...`
+also works and takes precedence over `.env`.
 
 ## Usage
 

@@ -17,7 +17,7 @@ Uses `uv` (Python ≥3.13). Always run via `uv run`.
 ```bash
 uv sync                              # install deps
 uv run playwright install chromium   # one-time: headless browser for JS rendering
-export ANTHROPIC_API_KEY=sk-ant-...  # needed only for live codegen / live tests
+cp .env.example .env                 # paste ANTHROPIC_API_KEY into .env (needed for live codegen/tests)
 
 # Run (live: fetch → codegen → extract → validate → print JSON, write run record)
 uv run scrape "<url>" --target job_postings
@@ -92,7 +92,10 @@ via `--from-snapshot` (no API call).
 
 ## Config
 
-Constants in `config.py`, all env-overridable: `SCRAPER_RUNS_DIR` (default `runs`),
+`config.py` calls `load_dotenv()` at import, so a project-root `.env` (gitignored;
+`.env.example` is the committed template) is read automatically for `ANTHROPIC_API_KEY` and
+the settings below. A real shell env var overrides `.env`. Constants in `config.py`, all
+env-overridable: `SCRAPER_RUNS_DIR` (default `runs`),
 `SCRAPER_USER_AGENT`, `SCRAPER_TIMEOUT`, `SCRAPER_TOKEN_BUDGET` (compressed-DOM char budget sent to
 codegen), `SCRAPER_ESCALATION_MODELS` (comma-separated ladder), `SCRAPER_MAX_REPAIR_ATTEMPTS`.
 

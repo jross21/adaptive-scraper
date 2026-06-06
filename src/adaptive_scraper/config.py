@@ -5,6 +5,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Load a project-local .env (if present) before reading any settings below, so
+# ANTHROPIC_API_KEY and the SCRAPER_* values can live in a file instead of the shell.
+# override=False (the default) means a real environment variable always wins over .env.
+load_dotenv()
+
 #: Descriptive User-Agent — politeness/identification from day one (spec §10).
 USER_AGENT = os.getenv(
     "SCRAPER_USER_AGENT",
