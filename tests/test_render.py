@@ -43,7 +43,6 @@ def test_fetch_result_defaults_to_not_rendered():
 def test_scraperun_phase2_field_defaults():
     run = ScrapeRun(run_id="r", url="u", target_name="job_postings", model="m")
     assert run.attempts == 1
-    assert run.models_tried == []
     assert run.repair_log == []
     assert run.rendered is False
 

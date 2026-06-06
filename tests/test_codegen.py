@@ -81,3 +81,21 @@ def test_generate_spec_raises_when_model_returns_no_spec():
     cd = compress(FIXTURE.read_text())
     with pytest.raises(CodegenError):
         generate_spec(cd, TARGET, client=client)
+
+
+def test_generate_spec_omits_temperature_for_opus():
+    """Opus 4.7/4.8 reject `temperature` (HTTP 400); Sonnet keeps temperature=0.
+    This guards anyone overriding SCRAPER_CODEGEN_MODEL to an Opus id."""
+    spec = ExtractionSpec(
+        field_rules=[FieldRule(field="title", selector="h3", selector_type="css")],
+        confidence=0.9,
+    )
+    cd = compress(FIXTURE.read_text())
+
+    sonnet_client = FakeClient(_fake_response(spec))
+    generate_spec(cd, TARGET, client=sonnet_client, model="claude-sonnet-4-6")
+    assert sonnet_client.messages.calls[0]["temperature"] == 0
+
+    opus_client = FakeClient(_fake_response(spec))
+    generate_spec(cd, TARGET, client=opus_client, model="claude-opus-4-8")
+    assert "temperature" not in opus_client.messages.calls[0]

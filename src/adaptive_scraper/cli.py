@@ -54,7 +54,7 @@ def scrape(
     url: Optional[str] = typer.Argument(None, help="URL to scrape (omit when using --from-snapshot)."),
     target: str = typer.Option("job_postings", "--target", "-t", help="Target name from the registry."),
     from_snapshot: Optional[Path] = typer.Option(None, "--from-snapshot", help="Replay a stored snapshot dir offline."),
-    model: str = typer.Option(DEFAULT_MODEL, "--model", help="Codegen model (start of the escalation ladder)."),
+    model: str = typer.Option(DEFAULT_MODEL, "--model", help="Codegen model (overrides the default Sonnet)."),
     render: bool = typer.Option(False, "--render/--no-render", help="Render JS with a headless browser up front. When off, the scraper still auto-falls-back to rendering if static extraction fails on a JS-shelled page."),
     runs_dir: Path = typer.Option(RUNS_DIR, "--runs-dir", help="Where snapshots/records are written."),
 ) -> None:

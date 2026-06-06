@@ -2,7 +2,7 @@
 
 Kept separate from the CLI so the whole loop is testable offline: pass a `spec` to
 skip codegen (deterministic spine), or omit it to generate one via the LLM. Codegen runs
-through the Phase-2 self-heal loop (`generate_spec_with_repair`); this module supplies the
+through the self-heal loop (`generate_spec_with_repair`); this module supplies the
 "definition of success" — interpret → validate — as the evaluator callback.
 """
 
@@ -14,7 +14,7 @@ import anthropic
 
 from .codegen.agent import DEFAULT_MODEL, generate_spec_with_repair
 from .compress.compressor import compress
-from .config import ESCALATION_MODELS, TOKEN_BUDGET
+from .config import TOKEN_BUDGET
 from .execute.interpreter import interpret
 from .models.run import ScrapeRun
 from .models.spec import ExtractionSpec
@@ -27,14 +27,6 @@ class PipelineOutcome:
     run: ScrapeRun
     validation: ValidationResult
     rows: list[dict]
-
-
-def _ladder_from(model: str) -> tuple[str, ...]:
-    """The escalation ladder starting at `model`: if it sits on the standard ladder,
-    escalate upward from there; otherwise run that single model with no escalation."""
-    if model in ESCALATION_MODELS:
-        return ESCALATION_MODELS[ESCALATION_MODELS.index(model) :]
-    return (model,)
 
 
 def run_pipeline(
@@ -52,7 +44,6 @@ def run_pipeline(
 ) -> PipelineOutcome:
     tokens_in = tokens_out = 0
     attempts = 1
-    models_tried: list[str] = []
     repair_log: list[str] = []
 
     if spec is None:
@@ -69,13 +60,12 @@ def run_pipeline(
             target,
             evaluate=_evaluate,
             client=client,
-            ladder=_ladder_from(model),
+            model=model,
         )
         spec = repair.spec
         model = repair.model
         tokens_in, tokens_out = repair.tokens_in, repair.tokens_out
         attempts = repair.attempts
-        models_tried = repair.models_tried
         repair_log = repair.repair_log
 
     rows = interpret(spec, html, base_url=base_url, cardinality=target.cardinality)
@@ -93,7 +83,6 @@ def run_pipeline(
         final_status="ok" if validation.ok else "failed",
         validation_errors=validation.errors,
         attempts=attempts,
-        models_tried=models_tried,
         repair_log=repair_log,
         tokens_in=tokens_in,
         tokens_out=tokens_out,

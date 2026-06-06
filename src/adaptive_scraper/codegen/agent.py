@@ -4,10 +4,10 @@ Uses structured outputs (`messages.parse(output_format=ExtractionSpec)`) so the 
 forced to return a schema-valid spec and retries on mismatch at the API layer — this is
 the spec's "emit only valid JSON, reject and retry on parse failure" requirement.
 
-`generate_spec` is the single-pass primitive (the spec's "Sonnet-class first pass").
-`generate_spec_with_repair` is the Phase-2 self-heal loop: it feeds validation failures
-back to the model and, after exhausting attempts on one model, escalates to the next in
-the ladder (Sonnet 4.6 → Opus 4.8). The "definition of success" (interpret → validate) is
+`generate_spec` is the single-pass primitive (the "Sonnet-class first pass").
+`generate_spec_with_repair` is the self-heal loop: it feeds validation failures back to the
+model and retries on the same model up to `max_attempts` (the Sonnet→Opus model escalation
+was removed for cost/simplicity). The "definition of success" (interpret → validate) is
 injected as a callback so this module stays decoupled from the execute/validate layers.
 """
 
@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 import anthropic
 
 from ..compress.compressor import CompressedDOM
-from ..config import ESCALATION_MODELS, MAX_REPAIR_ATTEMPTS
+from ..config import CODEGEN_MODEL, MAX_REPAIR_ATTEMPTS
 from ..models.spec import ExtractionSpec
 from ..models.target import ExtractionTarget
 from .prompts import SYSTEM_PROMPT, build_repair_message, build_user_message
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     # never imports the validate layer at runtime.
     from ..validate.validator import ValidationResult
 
-DEFAULT_MODEL = ESCALATION_MODELS[0]
+DEFAULT_MODEL = CODEGEN_MODEL
 MAX_TOKENS = 4096
 
 
@@ -56,7 +56,6 @@ class RepairResult:
     tokens_in: int
     tokens_out: int
     attempts: int
-    models_tried: list[str] = field(default_factory=list)
     repair_log: list[str] = field(default_factory=list)
 
 
@@ -117,76 +116,69 @@ def generate_spec_with_repair(
     *,
     evaluate: Callable[[ExtractionSpec], "ValidationResult"],
     client: anthropic.Anthropic | None = None,
-    ladder: tuple[str, ...] = ESCALATION_MODELS,
-    max_attempts_per_model: int = MAX_REPAIR_ATTEMPTS,
+    model: str = DEFAULT_MODEL,
+    max_attempts: int = MAX_REPAIR_ATTEMPTS,
 ) -> RepairResult:
     """Generate a spec, validate it via `evaluate`, and on failure feed the errors back to
-    the model and retry. Exhaust `max_attempts_per_model` on each model in `ladder` before
-    escalating to the next. Returns the first validating spec, or — if none validates — the
-    best-effort attempt with `ok=False` (never raises on validation failure, so the caller
-    can still write a run record and exit non-zero, matching Phase-1 behavior)."""
-    if not ladder:
-        raise CodegenError("escalation ladder is empty")
+    the model and retry on the same model, up to `max_attempts`. Returns the first
+    validating spec, or — if none validates — the best-effort attempt with `ok=False`
+    (never raises on validation failure, so the caller can still write a run record and
+    exit non-zero)."""
+    if max_attempts < 1:
+        raise CodegenError("max_attempts must be >= 1")
     client = client or anthropic.Anthropic()
 
     tokens_in = tokens_out = 0
-    attempts = 0
-    models_tried: list[str] = []
     repair_log: list[str] = []
-    best: tuple[ExtractionSpec, ValidationResult, str] | None = None
+    best: tuple[ExtractionSpec, ValidationResult] | None = None
     last_spec: ExtractionSpec | None = None
     last_validation: ValidationResult | None = None
 
-    for model in ladder:
-        models_tried.append(model)
-        for attempt in range(1, max_attempts_per_model + 1):
-            attempts += 1
-            if last_spec is None or last_validation is None:
-                message = build_user_message(compressed, target)
-            else:
-                message = build_repair_message(compressed, target, last_spec, last_validation)
+    for attempt in range(1, max_attempts + 1):
+        if last_spec is None or last_validation is None:
+            message = build_user_message(compressed, target)
+        else:
+            message = build_repair_message(compressed, target, last_spec, last_validation)
 
-            result = generate_spec(
-                compressed, target, client=client, model=model, user_message=message
+        result = generate_spec(
+            compressed, target, client=client, model=model, user_message=message
+        )
+        tokens_in += result.tokens_in
+        tokens_out += result.tokens_out
+
+        validation = evaluate(result.spec)
+        repair_log.append(
+            f"{model} attempt {attempt}: "
+            + (
+                "ok"
+                if validation.ok
+                else f"{len(validation.errors)} error(s), {validation.valid_count} valid rows"
             )
-            tokens_in += result.tokens_in
-            tokens_out += result.tokens_out
+        )
 
-            validation = evaluate(result.spec)
-            repair_log.append(
-                f"{model} attempt {attempt}: "
-                + (
-                    "ok"
-                    if validation.ok
-                    else f"{len(validation.errors)} error(s), {validation.valid_count} valid rows"
-                )
+        if validation.ok:
+            return RepairResult(
+                spec=result.spec,
+                model=model,
+                ok=True,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                attempts=attempt,
+                repair_log=repair_log,
             )
 
-            if validation.ok:
-                return RepairResult(
-                    spec=result.spec,
-                    model=model,
-                    ok=True,
-                    tokens_in=tokens_in,
-                    tokens_out=tokens_out,
-                    attempts=attempts,
-                    models_tried=models_tried,
-                    repair_log=repair_log,
-                )
+        if best is None or _is_better(validation, best[1]):
+            best = (result.spec, validation)
+        last_spec, last_validation = result.spec, validation
 
-            if best is None or _is_better(validation, best[1]):
-                best = (result.spec, validation, model)
-            last_spec, last_validation = result.spec, validation
-
-    assert best is not None  # ladder is non-empty, so at least one attempt ran
-    spec, _validation, model = best
+    assert best is not None  # max_attempts >= 1, so at least one attempt ran
+    spec, _validation = best
     return RepairResult(
         spec=spec,
         model=model,
         ok=False,
         tokens_in=tokens_in,
         tokens_out=tokens_out,
-        attempts=attempts,
-        models_tried=models_tried,
+        attempts=max_attempts,
         repair_log=repair_log,
     )

@@ -17,17 +17,16 @@ class ScrapeRun(BaseModel):
     run_id: str
     url: str
     target_name: str
-    model: str  # the model that produced the stored spec (final in the escalation ladder)
+    model: str  # the model that produced the stored spec
     snapshot_uri: str | None = None
     rendered: bool = False  # whether the page was JS-rendered (Phase 2) rather than static
     spec: ExtractionSpec | None = None
     rows_extracted: int = 0
     final_status: Literal["ok", "failed"] = "failed"
     validation_errors: list[str] = Field(default_factory=list)
-    # Phase-2 self-heal observability: how many codegen attempts ran, which models were
-    # tried (in order), and a per-attempt log. tokens_in/out accumulate across attempts.
+    # Self-heal observability: how many codegen attempts ran and a per-attempt log.
+    # tokens_in/out accumulate across attempts.
     attempts: int = 1
-    models_tried: list[str] = Field(default_factory=list)
     repair_log: list[str] = Field(default_factory=list)
     tokens_in: int = 0
     tokens_out: int = 0

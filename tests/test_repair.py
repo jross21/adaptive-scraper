@@ -1,4 +1,4 @@
-"""Phase-2 self-heal loop: repair feedback + Sonnet->Opus escalation.
+"""Self-heal loop: single-model repair feedback (no model escalation).
 
 Driven entirely offline with a fake Claude client (returns scripted specs) and a stub
 evaluator (stands in for interpret -> validate), so the loop's control flow is tested
@@ -17,7 +17,6 @@ from adaptive_scraper.models.spec import ExtractionSpec, FieldRule
 FIXTURE = Path(__file__).parent / "fixtures" / "jobs_listing.html"
 TARGET = TARGET_REGISTRY["job_postings"]
 SONNET = "claude-sonnet-4-6"
-OPUS = "claude-opus-4-8"
 
 
 def _spec(tag: str) -> ExtractionSpec:
@@ -71,8 +70,8 @@ def test_first_attempt_success_makes_one_call():
         TARGET,
         evaluate=lambda s: _vr(True, valid_count=3),
         client=client,
-        ladder=(SONNET, OPUS),
-        max_attempts_per_model=2,
+        model=SONNET,
+        max_attempts=2,
     )
 
     assert result.ok is True
@@ -102,13 +101,13 @@ def test_repair_feeds_errors_back_then_succeeds():
         TARGET,
         evaluate=evaluate,
         client=client,
-        ladder=(SONNET, OPUS),
-        max_attempts_per_model=2,
+        model=SONNET,
+        max_attempts=2,
     )
 
     assert result.ok is True
     assert result.attempts == 2
-    assert result.model == SONNET  # succeeded before escalating
+    assert result.model == SONNET
     assert result.spec.container_selector == "fixed"
     assert result.tokens_in == 20 and result.tokens_out == 10  # accumulated
 
@@ -118,47 +117,24 @@ def test_repair_feeds_errors_back_then_succeeds():
     assert "row-count floor not met" in second
 
 
-def test_escalates_to_opus_and_drops_temperature():
-    client = FakeClient([_spec("nope")])
-
-    result = generate_spec_with_repair(
-        _compressed(),
-        TARGET,
-        evaluate=lambda s: _vr(False, valid_count=0, errors=["still bad"]),
-        client=client,
-        ladder=(SONNET, OPUS),
-        max_attempts_per_model=2,
-    )
-
-    assert result.ok is False
-    assert result.attempts == 4  # 2 on Sonnet, then 2 on Opus
-    assert result.models_tried == [SONNET, OPUS]
-
-    by_model = {}
-    for call in client.messages.calls:
-        by_model.setdefault(call["model"], []).append(call)
-    # Sonnet 4.6 keeps temperature=0; Opus 4.8 must omit it (else HTTP 400).
-    assert all(c.get("temperature") == 0 for c in by_model[SONNET])
-    assert all("temperature" not in c for c in by_model[OPUS])
-
-
 def test_exhaustion_returns_best_effort_without_raising():
-    client = FakeClient([_spec("a"), _spec("b"), _spec("c"), _spec("d")])
-    # valid_count: 1, 3, 2, 0 -> the 2nd attempt ("b") is the best-effort winner.
-    counts = iter([1, 3, 2, 0])
+    client = FakeClient([_spec("a"), _spec("b")])
+    # valid_count: 1, 3 -> the 2nd attempt ("b") is the best-effort winner.
+    counts = iter([1, 3])
 
     result = generate_spec_with_repair(
         _compressed(),
         TARGET,
         evaluate=lambda s: _vr(False, valid_count=next(counts), errors=["x"]),
         client=client,
-        ladder=(SONNET, OPUS),
-        max_attempts_per_model=2,
+        model=SONNET,
+        max_attempts=2,
     )
 
     assert result.ok is False
+    assert result.attempts == 2
     assert result.spec.container_selector == "b"  # most valid rows wins
-    assert len(result.repair_log) == 4
+    assert len(result.repair_log) == 2
 
 
 def test_build_repair_message_includes_errors_and_previous_spec():
